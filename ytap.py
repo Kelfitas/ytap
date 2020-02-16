@@ -3,7 +3,6 @@ from __future__ import unicode_literals
 import re
 import sys
 import shlex
-import select
 import signal
 import requests
 import argparse
@@ -299,13 +298,6 @@ def get_video(url):
 def play_next():
     log('Playing next track')
     set_state(STATE_NEXT)
-    signal.alarm(0) # disable alarm
-
-# Signals
-def interrupted(signum, frame):
-    log('Playback ended')
-    play_next()
-signal.signal(signal.SIGALRM, interrupted)
 
 def signal_handler(sig, frame):
     menu_select()
@@ -334,5 +326,4 @@ while True:
 
     terminate_process(get_state('player'))
     set_state(play(vid, get_state('mpv_stdout'), get_state('mpv_stderr')), 'player')
-    signal.alarm(max(int(vid.get('duration')) - 5, 0))
 

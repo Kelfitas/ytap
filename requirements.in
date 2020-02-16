@@ -1,0 +1,2 @@
+# extend deps in setup.py
+-e .
