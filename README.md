@@ -10,7 +10,12 @@
 # Hotkeys
 - ctrl+k: show debug
 - ctrl+m: show menu
+- ctrl+F4: prev video
+- ctrl+F5: play/pause video
+- ctrl+F6: next video
 
 # TODO
 - customizable hotkeys
-- play/pause/next on media keys
+- ~play/pause/next on media keys~
+- fix prev
+- fix crash

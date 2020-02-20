@@ -5,5 +5,6 @@ setup(
     install_requires=[
         'youtube-dl>=2020.1.24',
         'keybind==0.2.0',
+        'logger==1.4',
     ],
 )

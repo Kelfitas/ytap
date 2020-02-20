@@ -2,16 +2,21 @@
 from __future__ import unicode_literals
 import re
 import sys
+import copy
 import shlex
 import signal
+import socket
 import requests
 import argparse
 import youtube_dl
 from time import sleep
+from logger import logging
+from subprocess import Popen
+from keybind import KeyBinder, configure_logging
 from youtube_dl.utils import *
 from datetime import datetime
-from keybind import KeyBinder
-from subprocess import Popen
+
+configure_logging(logging.DEBUG)
 
 # Helpers
 def log_sep():
@@ -30,7 +35,9 @@ def log(msg, level=LOG_INFO):
     print('[%s] %s' % (icon, msg))
 
 def debug():
-    print('state: %r' % state)
+    _state = copy.deepcopy(state)
+    _state['next_video']['formats'] = []
+    print('state: %r' % _state)
     print('IS_STATE_PLAY: %r' % is_state(STATE_PLAY))
     print('IS_STATE_FIND: %r' % is_state(STATE_FIND))
     print('IS_STATE_NEXT: %r' % is_state(STATE_NEXT))
@@ -61,6 +68,18 @@ def terminate_process(process):
         return False
 
     return True
+MPV_TOGGLE = 'toggle'
+MPV_CMD = {
+    MPV_TOGGLE: b'{"command": ["cycle", "pause"]}\n',
+}
+def send_mpv_cmd(cmd):
+    cmd = MPV_CMD.get(cmd, None)
+    if cmd is None:
+        raise Exception('%s not in MPV_CMD dict' % cmd)
+
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(mpv_socket)
+    s.send(cmd)
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -79,7 +98,7 @@ parser.add_argument('--video',
         const=True, default=False,
         help='Also play video')
 parser.add_argument('--notify',
-        help='Send notifications. Eg. ./ytda.py --notify "notify-send \'{message}\'"')
+        help='Send notifications. Eg. ./ytap.py --notify "notify-send \'{message}\'"')
 
 args = parser.parse_args()
 
@@ -90,9 +109,21 @@ def do_debug():
 def do_menu():
     menu_select()
 
+def do_prev():
+    play_prev()
+
+def do_next():
+    play_next()
+
+def do_toggle():
+    toggle_song()
+
 KeyBinder.activate({
     'Ctrl-K': do_debug,
     'Ctrl-M': do_menu,
+    'Ctrl-F4': do_prev,
+    'Ctrl-F5': do_toggle,
+    'Ctrl-F6': do_next,
 }, run_thread=True)
 
 # Consts
@@ -100,6 +131,7 @@ search_text = '[*] Search (-1 for menu): '
 select_action_text = '[*] Select action: '
 
 cookie_file = '/tmp/ytda.cookie.jar'
+mpv_socket = '/tmp/mpv.sock'
 
 # State
 STATE_PLAY = 1<<1
@@ -114,6 +146,7 @@ state = {
     'mpv_stderr': open('/tmp/mpv.err', 'w'),
     'history_dict': {},
     'history': [],
+    'history_current': -1,
 }
 
 def set_state(new_state, key='_'):
@@ -125,9 +158,20 @@ def get_state(key='_'):
 def is_state(flag):
     return (state['_'] & flag) == flag
 
+def get_history_prev():
+    i = max(0, get_state('history_current') - 1)
+    return get_state('history')[i]
+
+def get_history_prev():
+    i = min(len(get_state('history')) - 1, get_state('history_current') + 1)
+    return get_state('history')[i]
+
 def add_to_history(vid):
+    # TODO: a video can be played multiple times, maybe handle that
     state['history'].append({ 'id': vid, 'time': datetime.now() })
-    state['history_dict'][vid] = len(state['history']) - 1
+    i = len(state['history']) - 1
+    state['history_dict'][vid] = i
+    set_state(i, 'history_current')
 
 def was_played(vid):
     played_index = state['history_dict'].get(vid, False)
@@ -244,7 +288,7 @@ def play(video, stdout=None, stderr=None):
                 audio_url = v.get('url')
         mpv_args += [video_url, '--audio-file=%s' % audio_url]
 
-
+    mpv_args += ['--input-ipc-server=%s' % mpv_socket]
     proc = Popen(mpv_args, stdout=stdout, stderr=stderr)
     log('Player started with pid %r' % proc.pid)
 
@@ -298,6 +342,20 @@ def get_video(url):
 def play_next():
     log('Playing next track')
     set_state(STATE_NEXT)
+
+def play_prev():
+    log('Playing prev track')
+    prev_video = get_history_prev()
+    vid = prev_video.get('id')
+    prev_url = 'https://www.youtube.com/watch?v=%s' % vid
+
+    # update state
+    set_state(get_video(prev_url), 'next_video')
+    set_state(STATE_NEXT)
+
+def toggle_song():
+    log('Toggle play')
+    send_mpv_cmd(MPV_TOGGLE)
 
 def signal_handler(sig, frame):
     menu_select()
