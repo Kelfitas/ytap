@@ -399,7 +399,11 @@ def show_stats(vid):
     res = send_mpv_cmd(MPV_GET_TIME)
     if res is None:
         return
-    current_time = res['data']
+
+    current_time = res.get('data', None)
+    if current_time is None:
+        return
+
     duration = vid.get('duration')
     rows, columns = os.popen('stty size', 'r').read().split()
     rows = int(rows)
