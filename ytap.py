@@ -275,9 +275,6 @@ def fetch_next_url(video):
 
     log('Fetching next url: %s' % next_url)
     next_video = get_video(next_url)
-    thumb_file_path = '/tmp/ytap-thumb-%s.jpg' % vid
-    request.urlretrieve(next_video.get('thumbnail'), thumb_file_path)
-    next_video['thumb_file_path'] = thumb_file_path
 
     title = next_video.get('title')
     log('Next title: %s' % title)
