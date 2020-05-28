@@ -1,8 +1,11 @@
 #!/bin/python
 from __future__ import unicode_literals
+import os
 import re
 import sys
+import math
 import copy
+import time
 import shlex
 import signal
 import socket
@@ -69,17 +72,30 @@ def terminate_process(process):
 
     return True
 MPV_TOGGLE = 'toggle'
+MPV_GET_TIME = 'get-time'
 MPV_CMD = {
     MPV_TOGGLE: b'{"command": ["cycle", "pause"]}\n',
+    MPV_GET_TIME: b'{ "command": ["get_property", "playback-time"] }\n',
 }
 def send_mpv_cmd(cmd):
     cmd = MPV_CMD.get(cmd, None)
     if cmd is None:
         raise Exception('%s not in MPV_CMD dict' % cmd)
 
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(mpv_socket)
-    s.send(cmd)
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(mpv_socket)
+        s.send(cmd)
+    except Exception:
+        return None
+
+    res = None
+    try:
+        res = json.loads(str(s.recv(1024), 'utf8'))
+    except Exception:
+        pass
+
+    return res
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -98,7 +114,7 @@ parser.add_argument('--video',
         const=True, default=False,
         help='Also play video')
 parser.add_argument('--notify',
-        help='Send notifications. Eg. ./ytap.py --notify "notify-send \'{message}\'"')
+        help='Send notifications. Eg. ./ytap.py --notify "notify-send {message}"')
 
 args = parser.parse_args()
 
@@ -357,10 +373,55 @@ def toggle_song():
     log('Toggle play')
     send_mpv_cmd(MPV_TOGGLE)
 
+def get_progress(current_time, duration, columns):
+    bar_size = (float(columns) * 0.7)
+
+    # calculate percentages
+    perc_done = math.floor(current_time) / duration
+    perc_remaining = 1 - perc_done
+
+    # calculate sizes
+    size_done = int(bar_size * perc_done)
+    size_remaining = int(bar_size - size_done)
+
+    # construct bar
+    bar = ('=' * size_done) + (' ' * size_remaining)
+
+    return ('[%s]' % bar, perc_done)
+
+def fmt_vid_time(t):
+    t = int(t)
+    if t > 60 * 60:
+        return time.strftime('%H:%M:%S', time.gmtime(t))
+    return time.strftime('%M:%S', time.gmtime(t))
+
+def show_stats(vid):
+    res = send_mpv_cmd(MPV_GET_TIME)
+    if res is None:
+        return
+    current_time = res['data']
+    duration = vid.get('duration')
+    rows, columns = os.popen('stty size', 'r').read().split()
+    rows = int(rows)
+    columns = int(columns)
+
+    # Clear screen
+    os.system('clear')
+
+    print('Now playing: %s' % vid.get('title'))
+    for i in range(0, rows - 2):
+        print('')
+
+    (bar, perc_done) = get_progress(current_time, duration, columns)
+    ct = fmt_vid_time(current_time)
+    dur = fmt_vid_time(duration)
+    print('%s - %s/%s (%d%%)\r' % (bar, ct, dur, perc_done * 100), end="")
+
 def signal_handler(sig, frame):
     menu_select()
 signal.signal(signal.SIGINT, signal_handler)
 
+current_video = None
 while True:
     vid = None
     if is_state(STATE_PLAY):
@@ -368,6 +429,8 @@ while True:
         ret = get_state('player').poll()
         if not ret is None:
             play_next()
+        else:
+            show_stats(current_video)
         continue
     elif is_state(STATE_FIND):
         search_term = input(search_text)
@@ -375,8 +438,10 @@ while True:
             menu_select()
             continue
         vid = search(search_term)
+        current_video = vid
     elif is_state(STATE_NEXT):
         vid = get_state('next_video')
+        current_video = vid
         set_state(get_state() ^ STATE_NEXT)
 
     if vid is None:
