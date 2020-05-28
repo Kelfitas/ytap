@@ -13,6 +13,7 @@ import requests
 import argparse
 import youtube_dl
 from time import sleep
+from urllib import request
 from logger import logging
 from subprocess import Popen
 from keybind import KeyBinder, configure_logging
@@ -50,14 +51,16 @@ def print_menu():
     log('0. Terminate program')
     log('1. Terminate player')
     log('2. Youtube search')
-    log('3. Debug')
+    log('3. Resume play')
+    log('4. Debug')
     log_sep()
 
-def notify(msg):
+def notify(msg, thumbnail):
     if not args.notify:
         return
 
-    cmd = args.notify.format(message=shlex.quote(msg))
+    cmd = args.notify.format(message=shlex.quote(msg), thumbnail=shlex.quote(thumbnail))
+    print('cmd: %s' % cmd)
     Popen(cmd, shell=True, stdout=None, stderr=None)
 
 def terminate_process(process):
@@ -114,7 +117,7 @@ parser.add_argument('--video',
         const=True, default=False,
         help='Also play video')
 parser.add_argument('--notify',
-        help='Send notifications. Eg. ./ytap.py --notify "notify-send {message}"')
+        help='Send notifications. Eg. ./ytap.py --notify "notify-send -i {thumbnail} {message}"')
 
 args = parser.parse_args()
 
@@ -123,7 +126,8 @@ def do_debug():
     debug()
 
 def do_menu():
-    menu_select()
+    set_state(STATE_MENU)
+    # menu_select()
 
 def do_prev():
     play_prev()
@@ -153,6 +157,7 @@ mpv_socket = '/tmp/mpv.sock'
 STATE_PLAY = 1<<1
 STATE_FIND = 1<<2
 STATE_NEXT = 1<<3
+STATE_MENU = 1<<4
 state = {
     '_': STATE_FIND,
     'next_video': None,
@@ -200,7 +205,8 @@ def was_played(vid):
 ACTION_TERM_PROGRAM = 0
 ACTION_TERM_PLAYER = 1
 ACTION_FIND = 2
-ACTION_DEBUG = 3
+ACTION_PLAY = 3
+ACTION_DEBUG = 4
 
 def menu_select():
     print_menu()
@@ -214,6 +220,8 @@ def menu_select():
         terminate_process(get_state('player'))
     elif action == ACTION_FIND:
         set_state(STATE_FIND)
+    elif action == ACTION_PLAY:
+        set_state(STATE_PLAY)
     elif action == ACTION_DEBUG:
         debug()
 
@@ -267,6 +275,9 @@ def fetch_next_url(video):
 
     log('Fetching next url: %s' % next_url)
     next_video = get_video(next_url)
+    thumb_file_path = '/tmp/ytap-thumb-%s.jpg' % vid
+    request.urlretrieve(next_video.get('thumbnail'), thumb_file_path)
+    next_video['thumb_file_path'] = thumb_file_path
 
     title = next_video.get('title')
     log('Next title: %s' % title)
@@ -285,7 +296,7 @@ def play(video, stdout=None, stderr=None):
     # Notify changes
     msg = 'Now playing: %s' % title
     log(msg)
-    notify(msg)
+    notify(msg, video.get('thumb_file_path'))
 
     mpv_args = ['mpv']
 
@@ -342,18 +353,27 @@ def search(search_term):
 
         vid_num = len(entries)
         if vid_num == 1:
-            return entries[0]
+            return video_with_thumb(entries[0])
 
         while True:
             vid_num = int(input('[*] Pick (0-%d): ' % (len(entries) - 1)))
             if entries[vid_num]:
-                return entries[vid_num]
+                return video_with_thumb(entries[vid_num])
             elif vid_num == -1:
                 return None
 
+def video_with_thumb(video):
+    '''Downloads video thumbnail and injects it into video object'''
+    thumb_file_path = '/tmp/ytap-thumb-%s.jpg' % video.get('id')
+    url = video.get('thumbnail').replace('maxresdefault', 'default')
+    request.urlretrieve(url, thumb_file_path)
+    video['thumb_file_path'] = thumb_file_path
+
+    return video
+
 def get_video(url):
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url)
+        return video_with_thumb(ydl.extract_info(url))
 
 def play_next():
     log('Playing next track')
@@ -447,6 +467,8 @@ while True:
         vid = get_state('next_video')
         current_video = vid
         set_state(get_state() ^ STATE_NEXT)
+    elif is_state(STATE_MENU):
+        menu_select()
 
     if vid is None:
         continue
